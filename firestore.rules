@@ -1,0 +1,99 @@
+// firestore.rules — paste this into Firebase console → Firestore Database → Rules → Publish.
+//
+// What it enforces:
+//   • The chat has exactly two places, side "a" and side "b". The first two phones to open
+//     the app take them; a third phone (or a stranger with the link) is refused.
+//   • A phone's side never changes, and the two phones can't share one.
+//   • Only the two seated phones can read or write messages.
+//   • A phone posts messages as itself — or imports old messages for either side
+//     (Settings → Import old messages), marked as imported.
+//   • A seated phone may free one place (Settings → Disconnect) so a new phone can join.
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Lets the app confirm these rules are published. Nothing is ever stored here.
+    match /meta/{doc} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    match /rooms/{roomId} {
+      function signedIn() { return request.auth != null; }
+      function me() { return request.auth.uid; }
+      function isMember() { return signedIn() && me() in resource.data.members; }
+      function newMembers() { return request.resource.data.members; }
+      function changes() { return newMembers().diff(resource.data.members); }
+      function onlyMembersField() { return request.resource.data.keys().hasOnly(['members']); }
+      function validSeat(seat) {
+        return seat.keys().hasOnly(['name', 'lang', 'lastSeen', 'side'])
+          && seat.name is string && seat.name.size() > 0 && seat.name.size() <= 40
+          && seat.lang is string && seat.lang.size() > 0 && seat.lang.size() <= 10
+          && seat.lastSeen is number
+          && seat.side in ['a', 'b'];
+      }
+      // My side can't change once taken, and can't be the same as the other phone's.
+      function sideOk() {
+        return (!(me() in resource.data.members) || resource.data.members[me()].side == newMembers()[me()].side)
+          && (newMembers().keys().size() == 1
+              || newMembers()[newMembers().keys().removeAll([me()])[0]].side != newMembers()[me()].side);
+      }
+
+      // Only the seated phones can see who is in the chat.
+      allow read: if isMember();
+
+      // The very first phone creates the chat with itself in the only place.
+      allow create: if signedIn() && onlyMembersField()
+        && newMembers().keys().hasOnly([me()])
+        && validSeat(newMembers()[me()]);
+
+      // A phone may take a free place (never more than two) or refresh its own.
+      allow update: if signedIn() && onlyMembersField()
+        && newMembers().keys().size() <= 2
+        && changes().affectedKeys().hasOnly([me()])
+        && validSeat(newMembers()[me()])
+        && sideOk();
+
+      // A seated phone may remove exactly one place (Settings → Disconnect).
+      allow update: if isMember() && onlyMembersField()
+        && changes().affectedKeys().hasOnly(changes().removedKeys())
+        && changes().removedKeys().size() == 1;
+
+      allow delete: if false;
+    }
+
+    match /rooms/{roomId}/messages/{messageId} {
+      function room() { return get(/databases/$(database)/documents/rooms/$(roomId)).data; }
+      function isMember() { return request.auth != null && request.auth.uid in room().members; }
+      function mySide() { return room().members[request.auth.uid].side; }
+      function incoming() { return request.resource.data; }
+      function validText() {
+        return incoming().text is string && incoming().text.size() > 0 && incoming().text.size() <= 8000;
+      }
+      function importedByMe(data) {
+        return data.imported == true && data.importedBy == request.auth.uid;
+      }
+
+      allow read: if isMember();
+
+      // A phone posts as itself…
+      allow create: if isMember() && validText()
+        && incoming().uid == request.auth.uid
+        && incoming().side == mySide();
+
+      // …or brings in old messages on behalf of either side (Settings → Import old messages).
+      allow create: if isMember() && validText()
+        && importedByMe(incoming())
+        && incoming().side in ['a', 'b']
+        && incoming().uid is string;
+
+      allow update: if isMember() && validText()
+        && (resource.data.uid == request.auth.uid || (importedByMe(resource.data) && importedByMe(incoming())));
+      // Either phone may delete any message (it's a private chat for two) — used to clear out
+      // a test device's messages after disconnecting it.
+      allow delete: if isMember();
+    }
+  }
+}

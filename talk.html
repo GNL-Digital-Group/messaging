@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Talk with Gregorio</title>
+  <meta name="description" content="Speak in one language, hear it in the other.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0f766e" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+  <!-- Deliberately opens in the browser (display: browser): on an iPhone only Safari itself can listen. -->
+  <link rel="manifest" href="./talk.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main id="app">
+    <section id="screen-listen" class="screen chat talk">
+      <header class="chat-header">
+        <img class="header-logo" src="./icons/icon-192.png" alt="" width="36" height="36">
+        <div class="who">
+          <div class="partner-name">Talk with Gregorio</div>
+          <div class="partner-status">Whoever is talking taps their language</div>
+        </div>
+      </header>
+
+      <div class="listen-langs">
+        <button id="btn-lang-a" class="lang-btn" type="button" data-index="0">
+          <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+          <span id="lang-a-label">English</span>
+        </button>
+        <button id="btn-lang-b" class="lang-btn" type="button" data-index="1">
+          <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+          <span id="lang-b-label">Español</span>
+        </button>
+      </div>
+      <div class="listen-hint">
+        <span id="listen-status" class="listen-status"></span>
+        <label id="listen-autospeak-row" class="toggle"><input id="listen-autospeak" type="checkbox" checked> Say it aloud</label>
+        <button id="btn-listen-change" class="link-btn" type="button">Change languages</button>
+      </div>
+      <div id="listen-change" class="listen-controls" hidden>
+        <label><span>Language 1</span><select id="listen-lang-a"></select></label>
+        <label><span>Language 2</span><select id="listen-lang-b"></select></label>
+        <label class="wide"><span>Email (optional — raises the free translation limit from 5,000 to 50,000 characters a day)</span><input id="talk-email" type="email" autocomplete="email"></label>
+      </div>
+
+      <div id="listen-unsupported" class="banner" hidden></div>
+
+      <div id="listen-log" class="messages listen-log" role="log" aria-live="polite"></div>
+      <div id="listen-interim" class="listen-interim" aria-hidden="true"></div>
+
+      <form id="listen-form" class="composer">
+        <textarea id="listen-input" rows="1" placeholder="Or type it here…" enterkeyhint="go" autocomplete="off" maxlength="2000"></textarea>
+        <button type="submit" class="send-btn" aria-label="Translate">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M4 11h12.2l-5.6-5.6L12 4l8 8-8 8-1.4-1.4 5.6-5.6H4v-2z"/></svg>
+        </button>
+      </form>
+    </section>
+  </main>
+
+  <script type="module">
+    import { initTalk } from './talk.js';
+    import { guessLanguage } from './translate.js';
+
+    const LANGS_KEY = 'talk.langs';
+    const EMAIL_KEY = 'talk.email';
+    let langs = null;
+    try { langs = JSON.parse(localStorage.getItem(LANGS_KEY) || 'null'); } catch { langs = null; }
+    if (!Array.isArray(langs) || langs.length !== 2) {
+      const mine = guessLanguage();
+      langs = [mine, mine === 'es' ? 'en' : 'es'];
+    }
+    const emailInput = document.querySelector('#talk-email');
+    emailInput.value = localStorage.getItem(EMAIL_KEY) || '';
+    emailInput.addEventListener('change', () => localStorage.setItem(EMAIL_KEY, emailInput.value.trim()));
+
+    const talk = initTalk({
+      langs: () => langs,
+      setLangs: (pair) => { langs = pair; localStorage.setItem(LANGS_KEY, JSON.stringify(pair)); },
+      email: () => localStorage.getItem(EMAIL_KEY) || '',
+    });
+    talk.open();
+
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+    }
+  </script>
+</body>
+</html>

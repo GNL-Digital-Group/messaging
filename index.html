@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Chat with Gregorio</title>
+  <meta name="description" content="A private chat for two people that translates every message into your own language.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0f766e" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+
+  <!-- Installable app (Android / desktop) -->
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+  <meta name="mobile-web-app-capable" content="yes">
+
+  <!-- Installable app (iPhone / iPad) -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Chat with Gregorio">
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main id="app">
+
+    <!-- Shown until firebase-config.js has real values in it -->
+    <section id="screen-config" class="screen card-screen" hidden>
+      <div class="card">
+        <img class="logo" src="./icons/icon-192.png" alt="" width="72" height="72">
+        <h1>One-time setup needed</h1>
+        <p class="lead">Chat with Gregorio keeps your messages in a free Firebase project so they sync between your phones. That project isn't connected yet.</p>
+        <ol class="steps">
+          <li>Create a free Firebase project (about 5 minutes).</li>
+          <li>Paste its settings into <code>firebase-config.js</code>.</li>
+          <li>Publish, then install on both phones.</li>
+        </ol>
+        <a class="btn primary" href="https://github.com/GNL-Digital-Group/messaging#setup" target="_blank" rel="noopener">Open the setup guide</a>
+        <a class="btn ghost" href="./?demo=1">Try the demo first</a>
+      </div>
+    </section>
+
+    <!-- iPhone: a Safari tab and the Home Screen icon are separate "phones" — set up only from the icon -->
+    <section id="screen-install" class="screen card-screen" hidden>
+      <div class="card">
+        <img class="logo" src="./icons/icon-192.png" alt="" width="72" height="72">
+        <h1>Add it to your Home Screen first</h1>
+        <p class="lead">Tap <b>Share</b> (the square with an arrow — on newer iPhones it's inside the <b>⋯</b> button) → <b>Add to Home Screen</b> → <b>Add</b>. If it shows an <i>Open as Web App</i> switch, leave it on. Then open the chat from the new icon and enter your name there.</p>
+        <small>Opened this from another app (WhatsApp, Messages, Mail…)? Use its share or ⋯ button → <b>Open in Safari</b> first. On an iPhone, a Safari tab and the Home Screen icon count as two different phones, and the chat only has room for two — setting up here would use up one of the places.</small>
+        <a class="btn ghost" href="./?demo=1">Just want to see the demo?</a>
+      </div>
+    </section>
+
+    <!-- First-run setup, also reused as the Settings screen -->
+    <section id="screen-setup" class="screen card-screen" hidden>
+      <form id="setup-form" class="card" autocomplete="off">
+        <h1 id="setup-title">Chat with Gregorio</h1>
+        <p id="setup-lead" class="lead">Two people, two languages, one chat. Tell the app who you are — that's all it needs.</p>
+
+        <label>
+          <span>Your name</span>
+          <input id="f-name" type="text" required maxlength="40" autocomplete="nickname" autocapitalize="words">
+        </label>
+
+        <label>
+          <span>I read messages in</span>
+          <select id="f-lang"></select>
+        </label>
+
+        <div id="devices" class="devices" hidden>
+          <span class="label">Connected phones</span>
+          <div class="device"><span>You — <b id="d-me"></b></span><small>this phone</small></div>
+          <div class="device" id="d-partner-row" hidden>
+            <span id="d-partner"></span>
+            <button type="button" id="btn-disconnect" class="btn small danger">Disconnect</button>
+          </div>
+          <div id="d-empty" class="device"><small>The second place is free — the next phone to open the link takes it.</small></div>
+          <small>Only two phones can ever be connected. If your partner gets a new phone, disconnect the old one here and they'll join again from the link.</small>
+        </div>
+
+        <button type="button" id="btn-import" class="btn ghost" hidden>Import old messages…</button>
+
+        <details>
+          <summary>Optional: raise the free translation limit</summary>
+          <label>
+            <span>Email</span>
+            <input id="f-email" type="email" autocomplete="email">
+            <small>The free translator allows about 5,000 characters a day per network, or 50,000 a day if you give it an email address. It is only ever sent to the translation service.</small>
+          </label>
+        </details>
+
+        <button id="setup-submit" type="submit" class="btn primary">Start chatting</button>
+        <button id="setup-cancel" type="button" class="btn ghost" hidden>Cancel</button>
+      </form>
+    </section>
+
+    <!-- Both places taken, or this phone was disconnected -->
+    <section id="screen-full" class="screen card-screen" hidden>
+      <div class="card">
+        <img class="logo" src="./icons/icon-192.png" alt="" width="72" height="72">
+        <h1 id="full-title">This chat already has two phones</h1>
+        <p id="full-body" class="lead"></p>
+        <button id="btn-retry" type="button" class="btn primary">Try again</button>
+        <button id="btn-full-settings" type="button" class="btn ghost">Change my name or language</button>
+        <small>Just set this up and your partner hasn't joined yet? Then the other place is probably held by your computer, an earlier try, or (on an iPhone) a Safari tab instead of the Home Screen icon. Open ⚙ Settings on the device that is in the chat and tap Disconnect next to the stray entry.</small>
+      </div>
+    </section>
+
+    <!-- Import old messages (WhatsApp export or Android SMS backup) -->
+    <section id="screen-import" class="screen card-screen" hidden>
+      <div class="card">
+        <h1>Import old messages</h1>
+        <p class="lead">Bring your conversation from WhatsApp or your phone's text messages into this chat. Old messages are translated when you tap them, so they don't use up the free daily limit.</p>
+
+        <div id="import-pick" class="stack">
+          <label class="btn primary">
+            Choose the export file
+            <input id="f-import" type="file" accept=".txt,.zip,.xml,text/plain,application/zip,application/x-zip-compressed,text/xml,application/xml" hidden>
+          </label>
+          <details>
+            <summary>How do I get the file?</summary>
+            <p><b>WhatsApp on iPhone:</b> open the chat → tap the name at the top → <b>Export Chat</b> → <b>Without Media</b> → <b>Save to Files</b>. Then choose that file here (a <code>.zip</code> called "WhatsApp Chat - …").</p>
+            <p><b>WhatsApp on Android:</b> open the chat → <b>⋮</b> → <b>More</b> → <b>Export chat</b> → <b>Without media</b> → choose <b>Drive</b> (or email it to yourself). Android keeps no copy of its own — pick a place to save it. Then choose that <code>.txt</code> file here.</p>
+            <p><b>Android text messages:</b> install the free <b>SMS Backup &amp; Restore</b> app → make a backup of messages, saved to the phone. Choose its <code>.xml</code> file here — every conversation is in it, and you'll pick which one on the next step. Imported from your partner's phone? Then the row "texts sent from the phone that made the backup" is <i>them</i>, not you.</p>
+            <p><b>iPhone text messages:</b> Apple doesn't let apps read them. If your partner is on Android, back up from their phone instead — it holds both sides of the conversation.</p>
+          </details>
+        </div>
+
+        <div id="import-map" class="stack" hidden>
+          <p id="import-summary" class="lead"></p>
+          <label id="import-thread-row" hidden>
+            <span>Which conversation?</span>
+            <select id="import-thread"></select>
+          </label>
+          <label id="import-dayfirst-row" class="check" hidden>
+            <input id="import-dayfirst" type="checkbox">
+            <span>Dates in this file are day/month (25/12), not month/day (12/25)</span>
+          </label>
+          <div id="import-senders" class="senders"></div>
+          <button id="btn-import-go" type="button" class="btn primary">Import</button>
+        </div>
+
+        <div id="import-progress-box" class="stack" hidden>
+          <p id="import-progress-text" class="lead"></p>
+          <progress id="import-progress" max="100" value="0"></progress>
+        </div>
+
+        <p id="import-error" class="error-text" hidden></p>
+        <button id="btn-import-back" type="button" class="btn ghost">Back</button>
+      </div>
+    </section>
+
+    <!-- Listen: someone talks into the phone, you read it in your language -->
+    <section id="screen-listen" class="screen chat talk" hidden>
+      <header class="chat-header">
+        <button id="btn-listen-back" class="icon-btn" type="button" aria-label="Back to chat" title="Back to chat">
+          <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20v-2z"/></svg>
+        </button>
+        <div class="who">
+          <div class="partner-name">Talk</div>
+          <div class="partner-status">Whoever is talking taps their language</div>
+        </div>
+      </header>
+
+      <div class="listen-langs">
+        <button id="btn-lang-a" class="lang-btn" type="button" data-index="0">
+          <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+          <span id="lang-a-label">English</span>
+        </button>
+        <button id="btn-lang-b" class="lang-btn" type="button" data-index="1">
+          <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+          <span id="lang-b-label">Español</span>
+        </button>
+      </div>
+      <div class="listen-hint">
+        <span id="listen-status" class="listen-status"></span>
+        <label id="listen-autospeak-row" class="toggle"><input id="listen-autospeak" type="checkbox" checked> Say it aloud</label>
+        <button id="btn-listen-change" class="link-btn" type="button">Change languages</button>
+      </div>
+      <div id="listen-change" class="listen-controls" hidden>
+        <label><span>Language 1</span><select id="listen-lang-a"></select></label>
+        <label><span>Language 2</span><select id="listen-lang-b"></select></label>
+      </div>
+
+      <div id="listen-unsupported" class="banner" hidden></div>
+
+      <div id="listen-log" class="messages listen-log" role="log" aria-live="polite"></div>
+      <div id="listen-interim" class="listen-interim" aria-hidden="true"></div>
+
+      <form id="listen-form" class="composer">
+        <textarea id="listen-input" rows="1" placeholder="Or type it here…" enterkeyhint="go" autocomplete="off" maxlength="2000"></textarea>
+        <button type="submit" class="send-btn" aria-label="Translate">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M4 11h12.2l-5.6-5.6L12 4l8 8-8 8-1.4-1.4 5.6-5.6H4v-2z"/></svg>
+        </button>
+      </form>
+    </section>
+
+    <!-- The chat -->
+    <section id="screen-chat" class="screen chat" hidden>
+      <header class="chat-header">
+        <div class="who">
+          <div id="partner-name" class="partner-name">…</div>
+          <div id="partner-status" class="partner-status"></div>
+        </div>
+        <button id="btn-listen" class="pill-btn" type="button" title="Talk in your language — the phone says it in the other one">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+          Talk
+        </button>
+        <button id="btn-settings" class="icon-btn" type="button" aria-label="Settings" title="Settings">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.5 7.5 0 0 0-1.7-1L15 3h-4l-.4 2.7a7.5 7.5 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.5 7.5 0 0 0 1.7 1L11 21h4l.4-2.7a7.5 7.5 0 0 0 1.7-1l2.5 1 2-3.5L19.4 13zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg>
+        </button>
+      </header>
+
+      <div id="demo-banner" class="banner" hidden>Demo mode — nothing is saved, and your "partner" is a robot that replies in another language.</div>
+      <div id="chat-error" class="banner error" hidden></div>
+
+      <div id="messages" class="messages" role="log" aria-live="polite"></div>
+
+      <form id="composer" class="composer">
+        <button id="btn-dictate" class="icon-btn" type="button" aria-label="Dictate a message" title="Dictate a message" hidden>
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+        </button>
+        <textarea id="input" rows="1" placeholder="Message" enterkeyhint="send" autocomplete="off" maxlength="2000"></textarea>
+        <button id="btn-send" type="submit" class="send-btn" aria-label="Send">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M3 11.5 21 3l-8.5 18-2.5-7.5L3 11.5z"/></svg>
+        </button>
+      </form>
+    </section>
+
+  </main>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

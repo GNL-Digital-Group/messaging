@@ -1,0 +1,14 @@
+{
+  "name": "Talk with Gregorio",
+  "short_name": "Talk",
+  "description": "Speak in one language, hear it in the other.",
+  "start_url": "./talk.html",
+  "scope": "./talk.html",
+  "display": "browser",
+  "background_color": "#0f766e",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
