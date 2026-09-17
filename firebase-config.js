@@ -8,10 +8,10 @@
 // designs them to live in web pages; what protects your data is firestore.rules.
 
 export const firebaseConfig = {
-  apiKey: "PASTE_API_KEY",
-  authDomain: "PASTE_PROJECT_ID.firebaseapp.com",
-  projectId: "PASTE_PROJECT_ID",
-  storageBucket: "PASTE_PROJECT_ID.firebasestorage.app",
-  messagingSenderId: "PASTE_SENDER_ID",
-  appId: "PASTE_APP_ID",
+  apiKey: "AIzaSyBFQAHZIKsSGjxwnlzaOeBZ4_Uqce2JRYo",
+  authDomain: "chat-gregorio.firebaseapp.com",
+  projectId: "chat-gregorio",
+  storageBucket: "chat-gregorio.firebasestorage.app",
+  messagingSenderId: "149234860735",
+  appId: "1:149234860735:web:3f51ce3ffb6d3eea45fc0a",
 };
