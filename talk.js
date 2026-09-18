@@ -10,6 +10,8 @@ import { speakCloned, primeAudio, stopCloned } from './voice.js';
 
 const AUTO_SPEAK_KEY = 'chat.autoSpeak';
 const TRANSLATE_TIMEOUT_MS = 10_000;
+const SETTLE_MS = 1100;          // quiet time that means "they've finished the sentence"
+const STILL_TALKING_MS = 8000;   // within this, a longer version is the same sentence, not a new one
 const $ = (sel) => document.querySelector(sel);
 
 function el(tag, className, text) {
@@ -34,6 +36,8 @@ export function initTalk(opts) {
     listening: null,      // index of the language being listened to, or null
     speaking: false,      // reading a translation aloud (mic paused meanwhile)
     log: [],
+    settleTimer: null,
+    stickyStatus: null,   // a problem worth keeping on screen (e.g. nothing can be played)
     open: false,
     warnedNoVoice: false,
     autoSpeak: localStorage.getItem(AUTO_SPEAK_KEY) !== '0',
@@ -103,7 +107,8 @@ export function initTalk(opts) {
     }
   }
 
-  function setStatus(text, isError = false) {
+  function setStatus(text, isError = false, sticky = false) {
+    if (sticky) T.stickyStatus = { text, isError };
     const s = $('#listen-status');
     s.textContent = text;
     s.classList.toggle('error', isError);
@@ -119,7 +124,8 @@ export function initTalk(opts) {
       btn.classList.toggle('live', T.listening === i);
       btn.setAttribute('aria-pressed', String(T.listening === i));
     }
-    if (T.speaking) setStatus('Speaking…');
+    if (T.stickyStatus) setStatus(T.stickyStatus.text, T.stickyStatus.isError);
+    else if (T.speaking) setStatus('Speaking…');
     else if (T.listening !== null) setStatus(`Listening in ${languageName(langs()[T.listening])}… tap it again to stop.`);
     else setStatus(canListen() ? 'Tap the language of whoever is talking.' : `Typing as ${languageName(langs()[T.selected])}.`);
   }
@@ -138,6 +144,8 @@ export function initTalk(opts) {
     const wasListening = T.listening === index;
     primeSpeech(); // a tap is what lets the phone read translations aloud later
     primeAudio();
+    T.stickyStatus = null;
+    T.warnedNoVoice = false;
     stopListening();
     T.selected = index;
     if (wasListening || !canListen()) {
@@ -149,7 +157,7 @@ export function initTalk(opts) {
       lang: langs()[index],
       continuous: true,
       onInterim: (text) => { $('#listen-interim').textContent = text; },
-      onFinal: (text) => addUtterance(text, index),
+      onFinal: (text) => addFinal(text, index),
       onError: (code) => {
         stopListening();
         setStatus(listenErrorText(code), true);
@@ -195,30 +203,74 @@ export function initTalk(opts) {
     renderButtons();
   }
 
-  /** Say why nothing was heard — almost always a missing voice pack for that language. */
+  /** Say why nothing came out — and keep it on screen, because it needs acting on. */
   async function reportSpeechProblem(lang) {
     if (T.warnedNoVoice) return;
     T.warnedNoVoice = true;
-    const ok = await hasVoiceFor(lang);
     const name = languageName(lang);
-    setStatus(ok
-      ? `Couldn\u2019t play the audio. Check the phone\u2019s volume and silent switch, then tap \ud83d\udd0a on a line.`
-      : `This phone has no ${name} voice installed, so it can only show the text. Add one under Settings \u2192 Accessibility \u2192 Text-to-speech (Android) or Settings \u2192 Accessibility \u2192 Spoken Content \u2192 Voices (iPhone).`,
-      true);
+    const inAppBrowser = /; wv\)|FBAN|FBAV|Instagram|Line\/|Twitter/i.test(navigator.userAgent || '');
+    let message;
+    if (!(await hasVoiceFor(lang))) {
+      message = `No ${name} voice is installed on this phone, so it can only show the text. Add one under Settings \u2192 General management \u2192 Text-to-speech (Android) or Settings \u2192 Accessibility \u2192 Spoken Content (iPhone).`;
+    } else if (inAppBrowser) {
+      message = 'This page is open inside another app, which blocks sound. Tap the \u22ee menu at the top and choose "Open in Chrome".';
+    } else {
+      message = 'Nothing played. Check the volume, make sure this site isn\u2019t muted (\u22ee menu \u2192 unmute), then tap \ud83d\udd0a on a line.';
+    }
+    setStatus(message, true, true);
   }
 
-  async function addUtterance(original, index) {
-    const pair = langs();
-    const entry = { id: 'u' + Date.now() + Math.random().toString(16).slice(2), original, from: pair[index], to: pair[1 - index], speaker: index, text: null, error: null };
-    T.log.push(entry);
-    if (T.log.length > 200) T.log.shift();
+  /**
+   * A phrase the recognizer called final.
+   *
+   * Android ends its listening session whenever it finalises something, and the session we start
+   * in its place reports the same sentence again, longer, as you keep talking — "you think",
+   * "you think it'll", "you think it'll rain today". So nothing is translated the instant it
+   * arrives: an arriving phrase that extends (or is contained in) the one still open replaces it,
+   * and only once you actually stop does it get translated and spoken, once.
+   */
+  function addFinal(text, index) {
+    const now = Date.now();
+    const last = T.log[T.log.length - 1];
+    const open = last && !last.settled && last.speaker === index && now - last.at < STILL_TALKING_MS;
+    const a = text.toLowerCase();
+    const b = open ? last.original.toLowerCase() : '';
+
+    if (open && (a.startsWith(b) || b.startsWith(a))) {
+      if (text.length >= last.original.length) last.original = text; // keep the fullest version
+      last.at = now;
+    } else {
+      if (last && !last.settled) settleEntry(last); // a genuinely new sentence — finish the old one
+      const pair = langs();
+      T.log.push({
+        id: 'u' + now + Math.random().toString(16).slice(2),
+        original: text, from: pair[index], to: pair[1 - index], speaker: index,
+        at: now, settled: false, text: null, error: null,
+      });
+      if (T.log.length > 200) T.log.shift();
+    }
     renderLog();
+    clearTimeout(T.settleTimer);
+    T.settleTimer = setTimeout(() => {
+      const entry = T.log[T.log.length - 1];
+      if (entry && !entry.settled) settleEntry(entry);
+    }, SETTLE_MS);
+  }
+
+  function settleEntry(entry) {
+    if (entry.settled) return;
+    entry.settled = true;
+    renderLog();
+    translateEntry(entry);
+  }
+
+  async function translateEntry(entry) {
     if (entry.from === entry.to) {
-      entry.text = original;
+      entry.text = entry.original;
     } else {
       try {
         const timeout = new Promise((_, reject) => setTimeout(() => reject(new TranslationError('Timed out', 'offline')), TRANSLATE_TIMEOUT_MS));
-        entry.text = await Promise.race([translate(original, entry.from, entry.to, { email: opts.email() }), timeout]);
+        entry.text = await Promise.race([translate(entry.original, entry.from, entry.to, { email: opts.email() }), timeout]);
       } catch (err) {
         entry.error = err instanceof TranslationError && err.code === 'quota'
           ? 'Daily free translation limit reached (an email address in Settings raises it)'
@@ -287,7 +339,18 @@ export function initTalk(opts) {
     if (!text) return;
     input.value = '';
     autoGrow(input);
-    addUtterance(text, T.selected);
+    const pair = langs();
+    const entry = {
+      id: 'u' + Date.now() + Math.random().toString(16).slice(2),
+      original: text, from: pair[T.selected], to: pair[1 - T.selected], speaker: T.selected,
+      at: Date.now(), settled: true, text: null, error: null,
+    };
+    const last = T.log[T.log.length - 1];
+    if (last && !last.settled) settleEntry(last);
+    T.log.push(entry);
+    if (T.log.length > 200) T.log.shift();
+    renderLog();
+    translateEntry(entry);
   }
 
   // ---- wiring ----
