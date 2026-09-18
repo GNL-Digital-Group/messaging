@@ -5,10 +5,11 @@
 // installed app, so there the screen falls back to typing and the keyboard's microphone key).
 
 import { translate, TranslationError, LANGUAGES, languageName } from './translate.js';
-import { canListen, canSpeak, isIosStandalone, createRecognizer, speak, primeSpeech, hasVoiceFor, listenErrorText } from './speech.js';
+import { canListen, canSpeak, isIosStandalone, createRecognizer, speak, primeSpeech, hasVoiceFor, listVoices, listenErrorText } from './speech.js';
 import { speakCloned, primeAudio, stopCloned } from './voice.js';
 
 const AUTO_SPEAK_KEY = 'chat.autoSpeak';
+const VOICE_PICK_KEY = 'chat.voicePick.'; // + language code
 const TRANSLATE_TIMEOUT_MS = 10_000;
 const SETTLE_MS = 1100;          // quiet time that means "they've finished the sentence"
 const STILL_TALKING_MS = 8000;   // within this, a longer version is the same sentence, not a new one
@@ -62,6 +63,7 @@ export function initTalk(opts) {
     $('#listen-change').hidden = true;
     $('#listen-autospeak').checked = T.autoSpeak;
     $('#listen-autospeak-row').hidden = !canSpeak();
+    renderVoicePickers();
     root.classList.toggle('no-listen', !canListen());
     renderBanner();
     renderButtons();
@@ -105,6 +107,40 @@ export function initTalk(opts) {
     } else {
       banner.textContent = 'This browser can’t listen by itself. Tap a language, then type (or use the keyboard’s microphone key) in the box at the bottom.';
     }
+  }
+
+  const pickedVoice = (code) => {
+    try { return localStorage.getItem(VOICE_PICK_KEY + code) || ''; } catch { return ''; }
+  };
+
+  /** Offer the installed voices for each language so you can pick one that sounds like you. */
+  async function renderVoicePickers() {
+    const pair = langs();
+    for (const [i, id] of [[0, '#voice-pick-a'], [1, '#voice-pick-b']]) {
+      const sel = $(id);
+      const labelEl = $(id + '-label');
+      if (!sel) continue;
+      const code = pair[i];
+      if (labelEl) labelEl.textContent = languageName(code);
+      const voices = await listVoices(code);
+      const row = sel.closest('label');
+      if (row) row.hidden = voices.length < 2; // nothing to choose between
+      sel.replaceChildren(...[{ uri: '', label: 'Automatic' }, ...voices].map((v) => {
+        const o = document.createElement('option');
+        o.value = v.uri;
+        o.textContent = v.label;
+        return o;
+      }));
+      sel.value = pickedVoice(code);
+      if (sel.value !== pickedVoice(code)) sel.value = ''; // saved voice is gone
+    }
+  }
+
+  function onVoicePick(index, sel) {
+    const code = langs()[index];
+    try { localStorage.setItem(VOICE_PICK_KEY + code, sel.value); } catch { /* ignore */ }
+    // Say something in it straight away so the choice can be judged by ear.
+    speak(code === 'es' ? 'Hola, así sueno yo.' : 'Hello, this is how I sound.', code, sel.value);
   }
 
   function setStatus(text, isError = false, sticky = false) {
@@ -181,7 +217,7 @@ export function initTalk(opts) {
       const played = await speakCloned(text, voiceId, opts.getToken);
       if (played) return true;
     }
-    return speak(text, lang);
+    return speak(text, lang, pickedVoice(lang));
   }
 
   /** Read a translation aloud with the microphone paused, so the phone doesn't transcribe itself. */
@@ -325,6 +361,7 @@ export function initTalk(opts) {
     opts.setLangs(pair);
     if (T.rec && T.listening !== null) T.rec.setLang(pair[T.listening]);
     renderButtons();
+    renderVoicePickers();
   }
 
   function autoGrow(textarea) {
@@ -359,6 +396,8 @@ export function initTalk(opts) {
   $('#btn-listen-change').addEventListener('click', () => { const box = $('#listen-change'); box.hidden = !box.hidden; });
   $('#listen-lang-a').addEventListener('change', onLangSelectChange);
   $('#listen-lang-b').addEventListener('change', onLangSelectChange);
+  if ($('#voice-pick-a')) $('#voice-pick-a').addEventListener('change', (e) => onVoicePick(0, e.target));
+  if ($('#voice-pick-b')) $('#voice-pick-b').addEventListener('change', (e) => onVoicePick(1, e.target));
   $('#listen-autospeak').addEventListener('change', (e) => {
     T.autoSpeak = e.target.checked;
     localStorage.setItem(AUTO_SPEAK_KEY, T.autoSpeak ? '1' : '0');

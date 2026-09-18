@@ -190,6 +190,36 @@ export async function hasVoiceFor(code) {
 }
 
 /**
+ * Every installed voice that can read `code`, newest-sounding first.
+ * Phones name voices unhelpfully ("es-us-x-esd-local"), so each gets a plain label.
+ */
+export async function listVoices(code) {
+  if (!canSpeak()) return [];
+  const want = normLang(speechLang(code));
+  const base = want.split('-')[0];
+  const voices = (await voicesReady()).filter((v) => normLang(v.lang).split('-')[0] === base);
+  return voices.map((v, i) => ({
+    uri: v.voiceURI,
+    lang: v.lang,
+    label: voiceLabel(v, i),
+  }));
+}
+
+/** A name a person can choose between, since the raw ones are machine codes. */
+function voiceLabel(v, index) {
+  const raw = String(v.name || v.voiceURI || '').trim();
+  const region = String(v.lang || '').split(/[-_]/)[1];
+  const tidy = raw
+    .replace(/^(Google|Microsoft|Samsung|Apple)\s+/i, '')
+    .replace(/\s*\((enhanced|premium|compact|network|local)\)/ig, '')
+    .trim();
+  // Android often exposes several numbered variants with no human name at all.
+  const machine = /^[a-z]{2}[-_][a-z]{2}([-_]x[-_][a-z]+)?([-_](local|network))?$/i.test(tidy) || !tidy;
+  const name = machine ? `Voice ${index + 1}` : tidy;
+  return region ? `${name} (${region.toUpperCase()})` : name;
+}
+
+/**
  * Phones only let a page speak after a tap. Call this from a tap handler once; afterwards
  * speak() may run from anywhere (e.g. right after a translation arrives).
  */
@@ -210,9 +240,10 @@ export function primeSpeech() {
 
 /**
  * Read `text` aloud in `lang`.
+ * `preferredUri` picks a specific installed voice (what the voice chooser saved).
  * Resolves true when it actually played, false if the phone couldn't say it.
  */
-export function speak(text, lang) {
+export function speak(text, lang, preferredUri) {
   if (!canSpeak() || !text) return Promise.resolve(false);
   return new Promise((resolve) => {
     let done = false;
@@ -229,7 +260,8 @@ export function speak(text, lang) {
     const go = async () => {
       const voices = await voicesReady();
       const tag = speechLang(lang);
-      const voice = pickVoice(voices, tag);
+      const chosen = preferredUri ? voices.find((v) => v.voiceURI === preferredUri) : null;
+      const voice = chosen || pickVoice(voices, tag);
       const u = new SpeechSynthesisUtterance(text);
       u.lang = tag;
       if (voice) u.voice = voice;

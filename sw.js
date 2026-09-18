@@ -1,7 +1,7 @@
 // sw.js — service worker: makes the app installable and lets it open offline.
 // Bump VERSION whenever the app files change so phones pick up the update.
 
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = `chat-${VERSION}`;
 const LIB_CACHE = 'chat-libs'; // Firebase's versioned modules from gstatic — immutable, kept across versions
 const SHELL = [
