@@ -16,6 +16,7 @@ import { translate, getCached, TranslationError, LANGUAGES, languageName, guessL
 import { readExport, ImportError, ME } from './import.js';
 import { canListen, createRecognizer, listenErrorText } from './speech.js';
 import { initTalk } from './talk.js';
+import { cloningAvailable, canRecord, startRecording, cloneVoice, clearCachedVoice } from './voice.js';
 import { firebaseConfig } from './firebase-config.js';
 
 const APP_NAME = 'Chat with Gregorio';
@@ -60,6 +61,9 @@ const state = {
   importing: false,
   // Listen screen (in-person interpreter) and composer dictation
   listen: { langs: null }, // [mine, theirs] for the Talk screen (logic in talk.js)
+  myVoiceId: null,      // my cloned voice at ElevenLabs, if I recorded one
+  recorder: null,       // an in-progress voice recording
+  recordTimer: null,
   dictation: null,
 };
 
@@ -78,6 +82,7 @@ const screens = {
 const profileKey = () => (state.demo ? 'chat.demo.profile' : 'chat.profile');
 const SEATED_KEY = 'chat.seated';
 const SIDE_KEY = 'chat.side';
+const VOICE_KEY = 'chat.voiceId';
 
 function loadProfile() {
   try {
@@ -113,7 +118,22 @@ function isConfigured() {
 const otherSide = (side) => (side === 'a' ? 'b' : 'a');
 
 function seatDoc(side) {
-  return { name: state.profile.name, lang: state.profile.lang, lastSeen: Date.now(), side };
+  const seat = { name: state.profile.name, lang: state.profile.lang, lastSeen: Date.now(), side };
+  if (state.myVoiceId) seat.voiceId = state.myVoiceId;
+  return seat;
+}
+
+/** Proves to my own voice Worker that this really is one of our phones. */
+async function getIdToken() {
+  if (!firebase) return null;
+  const user = firebase.auth.getAuth(firebase.app).currentUser;
+  return user ? user.getIdToken() : null;
+}
+
+/** Whose voice should speak language `index` on the Talk screen: 0 = me, 1 = my partner. */
+function voiceIdFor(index) {
+  if (index === 0) return state.myVoiceId || null;
+  return (state.partner && state.partner.voiceId) || null;
 }
 
 const isPermissionDenied = (e) => /permission-denied/.test(String((e && e.code) || ''));
@@ -372,7 +392,10 @@ async function main() {
   registerServiceWorker();
   state.demo = new URLSearchParams(location.search).has('demo');
   state.profile = loadProfile();
-  if (!state.demo) state.side = localStorage.getItem(SIDE_KEY) || null;
+  if (!state.demo) {
+    state.side = localStorage.getItem(SIDE_KEY) || null;
+    state.myVoiceId = localStorage.getItem(VOICE_KEY) || null;
+  }
   bindUI();
 
   if (!state.demo && !isConfigured()) {
@@ -599,6 +622,7 @@ function openSetup(editing) {
   $('#setup-cancel').hidden = !editing;
   $('#btn-import').hidden = !(editing && state.seated);
   renderDevices();
+  renderVoiceBox();
   show('setup');
   if (!editing) $('#f-name').focus();
 }
@@ -642,6 +666,126 @@ function renderDevices() {
   $('#d-partner-row').hidden = !p;
   $('#d-empty').hidden = !!p;
   if (p) $('#d-partner').textContent = `${p.name} — reads ${languageName(p.lang)}`;
+  renderVoiceBox();
+}
+
+// ---------- Your voice ----------
+
+function renderVoiceBox() {
+  const box = $('#voice-box');
+  const editing = !$('#setup-cancel').hidden;
+  box.hidden = !(editing && state.seated && cloningAvailable() && !state.demo);
+  if (box.hidden) return;
+  const on = !!state.myVoiceId;
+  const state_el = $('#voice-state');
+  state_el.textContent = on
+    ? 'On \u2014 your partner hears your messages in your voice.'
+    : (canRecord()
+      ? 'Off \u2014 your messages are read by the phone\u2019s built-in voice.'
+      : 'This phone can\u2019t record audio in the browser.');
+  state_el.classList.toggle('on', on);
+  $('#voice-summary').textContent = on ? 'Record it again\u2026' : 'Record my voice\u2026';
+  $('#btn-voice-remove').hidden = !on;
+  $('#btn-record').disabled = !$('#voice-consent').checked || !canRecord();
+}
+
+function setVoiceError(message) {
+  const el = $('#voice-error');
+  el.textContent = message || '';
+  el.hidden = !message;
+}
+
+function setRecordingUi(recording, seconds) {
+  const btn = $('#btn-record');
+  const timer = $('#voice-timer');
+  btn.textContent = recording ? 'Stop & save' : 'Start recording';
+  btn.classList.toggle('recording', recording);
+  timer.classList.toggle('live', recording);
+  timer.textContent = recording ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : '';
+}
+
+async function onRecordClick() {
+  setVoiceError('');
+  if (state.recorder) return finishRecording();
+  try {
+    state.recorder = await startRecording();
+  } catch (e) {
+    state.recorder = null;
+    setVoiceError(/NotAllowed|Permission/i.test(String(e && e.name))
+      ? 'Microphone access was blocked. Allow the microphone for this app in your phone\u2019s settings.'
+      : 'Couldn\u2019t start recording on this phone.');
+    return;
+  }
+  let seconds = 0;
+  setRecordingUi(true, 0);
+  state.recordTimer = setInterval(() => {
+    seconds++;
+    setRecordingUi(true, seconds);
+    if (seconds >= 180) finishRecording(); // plenty of material; keep the upload small
+  }, 1000);
+  state.recordSeconds = () => seconds;
+}
+
+async function finishRecording() {
+  const rec = state.recorder;
+  if (!rec) return;
+  const seconds = state.recordSeconds ? state.recordSeconds() : 0;
+  clearInterval(state.recordTimer);
+  state.recorder = null;
+  setRecordingUi(false, 0);
+
+  if (seconds < 20) {
+    rec.cancel();
+    setVoiceError('That was only a few seconds. Read the paragraph for about a minute so the voice sounds like you.');
+    return;
+  }
+
+  let blob;
+  try {
+    blob = await rec.stop();
+  } catch {
+    setVoiceError('Nothing was recorded. Please try again.');
+    return;
+  }
+
+  const btn = $('#btn-record');
+  btn.disabled = true;
+  btn.textContent = 'Creating your voice\u2026';
+  try {
+    const voiceId = await cloneVoice({
+      blob,
+      fileName: rec.fileName,
+      name: `${state.profile.name} (${APP_NAME})`,
+      getToken: getIdToken,
+    });
+    const previous = state.myVoiceId;
+    state.myVoiceId = voiceId;
+    localStorage.setItem(VOICE_KEY, voiceId);
+    if (previous) clearCachedVoice(previous);
+    refreshSeat({ voiceId });
+    toast('Your voice is ready \u2014 open Talk and say something.', 6000);
+    $('#voice-details').open = false;
+  } catch (e) {
+    setVoiceError(String((e && e.message) || e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Start recording';
+    renderVoiceBox();
+  }
+}
+
+function onVoiceRemove() {
+  if (!state.myVoiceId) return;
+  if (!confirm('Stop using your voice? Messages will be read by the phone\u2019s built-in voice again.')) return;
+  const previous = state.myVoiceId;
+  state.myVoiceId = null;
+  localStorage.removeItem(VOICE_KEY);
+  clearCachedVoice(previous);
+  // Clearing the field on my seat is a normal seat update, so the rules allow it.
+  if (state.store && state.seated) {
+    state.store.claimSeat(seatDoc(state.side)).catch(() => {});
+  }
+  renderVoiceBox();
 }
 
 async function onDisconnect() {
@@ -979,6 +1123,8 @@ const talk = initTalk({
   email: () => (state.profile && state.profile.email) || '',
   onBack: () => show('chat'),
   safariLink: new URL('./talk.html', location.href).href,
+  voiceIdFor,
+  getToken: getIdToken,
 });
 
 function openListen() {
@@ -1376,6 +1522,9 @@ function bindUI() {
   $('#setup-cancel').addEventListener('click', closeSetup);
   $('#btn-disconnect').addEventListener('click', onDisconnect);
   $('#btn-import').addEventListener('click', openImport);
+  $('#voice-consent').addEventListener('change', renderVoiceBox);
+  $('#btn-record').addEventListener('click', onRecordClick);
+  $('#btn-voice-remove').addEventListener('click', onVoiceRemove);
   $('#btn-settings').addEventListener('click', () => openSetup(true));
   $('#btn-retry').addEventListener('click', () => { rememberSeated(false); connect(); });
   $('#btn-full-settings').addEventListener('click', () => openSetup(true));

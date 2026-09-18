@@ -6,6 +6,7 @@
 
 import { translate, TranslationError, LANGUAGES, languageName } from './translate.js';
 import { canListen, canSpeak, isIosStandalone, createRecognizer, speak, primeSpeech, hasVoiceFor, listenErrorText } from './speech.js';
+import { speakCloned, primeAudio, stopCloned } from './voice.js';
 
 const AUTO_SPEAK_KEY = 'chat.autoSpeak';
 const TRANSLATE_TIMEOUT_MS = 10_000;
@@ -29,7 +30,7 @@ function el(tag, className, text) {
 export function initTalk(opts) {
   const T = {
     rec: null,
-    selected: 1,          // which language typed text is in (last tapped)
+    selected: 0,          // which language typed text is in (last tapped; your own to begin with)
     listening: null,      // index of the language being listened to, or null
     speaking: false,      // reading a translation aloud (mic paused meanwhile)
     log: [],
@@ -70,6 +71,7 @@ export function initTalk(opts) {
   function close() {
     stopListening();
     if (canSpeak()) speechSynthesis.cancel();
+    stopCloned();
     T.open = false;
   }
 
@@ -135,6 +137,7 @@ export function initTalk(opts) {
     const index = Number(event.currentTarget.dataset.index);
     const wasListening = T.listening === index;
     primeSpeech(); // a tap is what lets the phone read translations aloud later
+    primeAudio();
     stopListening();
     T.selected = index;
     if (wasListening || !canListen()) {
@@ -160,8 +163,21 @@ export function initTalk(opts) {
     renderButtons();
   }
 
+  /**
+   * Say `text` in `lang`. If the person who said it has recorded their own voice, that is used;
+   * otherwise (or if it fails) the phone's built-in voice speaks instead.
+   */
+  async function speakBest(text, lang, speaker) {
+    const voiceId = opts.voiceIdFor && speaker !== undefined ? opts.voiceIdFor(speaker) : null;
+    if (voiceId && opts.getToken) {
+      const played = await speakCloned(text, voiceId, opts.getToken);
+      if (played) return true;
+    }
+    return speak(text, lang);
+  }
+
   /** Read a translation aloud with the microphone paused, so the phone doesn't transcribe itself. */
-  async function sayAloud(text, lang) {
+  async function sayAloud(text, lang, speaker) {
     const rec = T.rec;
     const index = T.listening;
     const wasListening = !!rec && index !== null;
@@ -172,7 +188,7 @@ export function initTalk(opts) {
     // Android only hands the speaker back a moment after the microphone stops; speaking
     // immediately gets swallowed with no error.
     if (wasListening) await new Promise((r) => setTimeout(r, 400));
-    const spoke = await speak(text, lang);
+    const spoke = await speakBest(text, lang, speaker);
     T.speaking = false;
     if (!spoke) await reportSpeechProblem(lang);
     if (rec && T.rec === rec && T.listening === index && index !== null && T.open) rec.start();
@@ -193,7 +209,7 @@ export function initTalk(opts) {
 
   async function addUtterance(original, index) {
     const pair = langs();
-    const entry = { id: 'u' + Date.now() + Math.random().toString(16).slice(2), original, from: pair[index], to: pair[1 - index], text: null, error: null };
+    const entry = { id: 'u' + Date.now() + Math.random().toString(16).slice(2), original, from: pair[index], to: pair[1 - index], speaker: index, text: null, error: null };
     T.log.push(entry);
     if (T.log.length > 200) T.log.shift();
     renderLog();
@@ -211,7 +227,7 @@ export function initTalk(opts) {
       }
     }
     renderLog();
-    if (entry.text && entry.from !== entry.to && T.autoSpeak && T.open) await sayAloud(entry.text, entry.to);
+    if (entry.text && entry.from !== entry.to && T.autoSpeak && T.open) await sayAloud(entry.text, entry.to, entry.speaker);
   }
 
   function renderLog() {
@@ -242,7 +258,7 @@ export function initTalk(opts) {
         btn.setAttribute('aria-label', 'Read aloud');
         btn.title = 'Read aloud';
         btn.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M3 9v6h4l5 4V5L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>';
-        btn.addEventListener('click', () => { T.warnedNoVoice = false; sayAloud(u.text, u.to); });
+        btn.addEventListener('click', () => { T.warnedNoVoice = false; sayAloud(u.text, u.to, u.speaker); });
         row.append(btn);
       }
       box.append(row);

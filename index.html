@@ -79,6 +79,26 @@
           <small>Only two phones can ever be connected. If your partner gets a new phone, disconnect the old one here and they'll join again from the link.</small>
         </div>
 
+        <div id="voice-box" class="devices" hidden>
+          <span class="label">Your voice</span>
+          <p id="voice-state" class="voice-state"></p>
+          <details id="voice-details">
+            <summary id="voice-summary">Record my voice…</summary>
+            <p class="voice-hint">Read this out loud in a quiet room for about a minute. Your partner will then hear your messages in your own voice, speaking their language.</p>
+            <p class="voice-script">The best time to plant a tree was twenty years ago; the second best time is today. I usually get up early, make coffee, and take the dog around the block before anyone else is awake. If it rains I take the car instead. Yesterday I picked up bread, milk, and a bag of apples on the way home, and I forgot the one thing I actually went out for. Tonight I would like to cook something simple, sit down together, and hear about your day. Tomorrow I have to leave a little earlier than usual, so I will say goodbye before you wake up.</p>
+            <label class="check">
+              <input id="voice-consent" type="checkbox">
+              <span>This is <b>my own voice</b> (or I have this person's permission), and I agree the recording is sent to ElevenLabs to create the voice.</span>
+            </label>
+            <div class="voice-actions">
+              <button id="btn-record" class="btn primary" type="button" disabled>Start recording</button>
+              <span id="voice-timer" class="voice-timer"></span>
+            </div>
+            <p id="voice-error" class="error-text" hidden></p>
+          </details>
+          <button id="btn-voice-remove" class="btn ghost small" type="button" hidden>Stop using my voice</button>
+        </div>
+
         <button type="button" id="btn-import" class="btn ghost" hidden>Import old messages…</button>
 
         <details>

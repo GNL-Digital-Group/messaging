@@ -122,6 +122,27 @@ the separate **Talk page in Safari**: https://gnl-digital-group.github.io/messag
 you can add it to the Home Screen too (Share → Add to Home Screen); that icon opens in Safari
 and listens properly. Needs no setup and nothing from it is stored in the chat.
 
+### Speaking in your own voice (optional, ~$5/month)
+
+By default the phone's built-in voice reads translations aloud. You can instead have it speak in
+**your own voice** — you say something in English, and your partner hears *you* saying it in
+Spanish. Each of you records about a minute of speech once, in ⚙ Settings → **Your voice**.
+
+This one isn't free and isn't automatic, because real voice cloning needs a paid service:
+an **ElevenLabs Starter plan ($5/month)** plus a tiny free Cloudflare Worker that holds the API
+key so it isn't exposed on this public page. The whole setup is about ten minutes and is written
+out in [`worker/README.md`](worker/README.md).
+
+Things worth knowing:
+
+- **Only record your own voice**, or someone else's with their permission — the app asks you to
+  confirm that before anything is uploaded, and the recording does go to ElevenLabs.
+- Phrases you repeat are stored on the phone, so saying the same thing again costs nothing.
+- If anything is missing — no Worker, no recording, no signal, no credit left — the phone's own
+  voice takes over and the chat carries on as normal.
+- To stop: ⚙ Settings → *Stop using my voice* (and delete the voice in the ElevenLabs dashboard
+  if you want it gone entirely).
+
 ### Speak instead of typing
 
 On Android, the microphone next to the message box dictates into it in your language. Tap it,
@@ -202,6 +223,8 @@ and the next two phones start fresh. Old messages are deleted with it.)
 | `translate.js` | Translation engine + language list |
 | `import.js` | Reads WhatsApp exports and SMS backups |
 | `speech.js` | Microphone listening and read-aloud |
+| `voice.js`, `voice-config.js` | Optional: speaking in your own cloned voice |
+| `worker/` | The key-holding proxy for the voice feature, and how to deploy it |
 | `talk.js`, `talk.html`, `talk.webmanifest` | The Talk screen, and its stand-alone page for Safari on an iPhone |
 | `firebase-config.js` | Your Firebase project's settings (step 2) |
 | `firestore.rules` | Security rules to paste into Firebase (step 4) |

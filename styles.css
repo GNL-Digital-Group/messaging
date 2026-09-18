@@ -200,6 +200,19 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fo
 .listen-status.error { color: var(--danger); }
 .link-btn { background: none; border: 0; color: var(--accent); font: inherit; font-size: 13.5px; cursor: pointer; padding: 4px 0; white-space: nowrap; }
 .listen-hint { flex-wrap: wrap; }
+.voice-state { font-size: 14px; color: var(--muted); }
+.voice-state.on { color: var(--accent); font-weight: 600; }
+.voice-hint { font-size: 13.5px; color: var(--muted); margin-top: 10px; }
+.voice-script {
+  font-size: 15px; line-height: 1.55; margin-top: 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 12px; padding: 12px;
+  max-height: 210px; overflow-y: auto;
+}
+.voice-actions { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.voice-actions .btn { flex: 1; }
+.voice-timer { font-variant-numeric: tabular-nums; font-size: 15px; color: var(--muted); min-width: 52px; text-align: right; }
+.voice-timer.live { color: #dc2626; font-weight: 700; }
+#btn-record.recording { background: #dc2626; color: #fff; }
 .header-logo { width: 36px; height: 36px; border-radius: 10px; flex: none; }
 .no-listen .lang-btn svg { display: none; }
 .listen-controls label.wide { grid-column: 1 / -1; }

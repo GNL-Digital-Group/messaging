@@ -28,11 +28,12 @@ service cloud.firestore {
       function changes() { return newMembers().diff(resource.data.members); }
       function onlyMembersField() { return request.resource.data.keys().hasOnly(['members']); }
       function validSeat(seat) {
-        return seat.keys().hasOnly(['name', 'lang', 'lastSeen', 'side'])
+        return seat.keys().hasOnly(['name', 'lang', 'lastSeen', 'side', 'voiceId'])
           && seat.name is string && seat.name.size() > 0 && seat.name.size() <= 40
           && seat.lang is string && seat.lang.size() > 0 && seat.lang.size() <= 10
           && seat.lastSeen is number
-          && seat.side in ['a', 'b'];
+          && seat.side in ['a', 'b']
+          && (!('voiceId' in seat) || (seat.voiceId is string && seat.voiceId.size() <= 64));
       }
       // My side can't change once taken, and can't be the same as the other phone's.
       function sideOk() {
