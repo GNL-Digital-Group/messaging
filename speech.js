@@ -39,8 +39,12 @@ export function createRecognizer({ lang, continuous = false, onInterim, onFinal,
   let heard = false;        // this session produced a result, or a genuine 'no-speech' (the engine did listen)
   let deadSessions = 0;     // consecutive sessions that ended at once with nothing
   let reportedError = false;
+  let lastFinalIndex = -1;  // highest results[] index already delivered — reset for each new instance
+  let recentFinals = [];    // { text, at } of what we've handed over, to catch restart echoes
   const DEAD_MS = 1500;
   const DEAD_LIMIT = 3;
+  const ECHO_WINDOW_MS = 2500;   // a phrase arriving this soon after a (re)start is a replay, not speech
+  const ECHO_MEMORY_MS = 20_000; // how far back to remember what was already said
   const setState = (running) => onStateChange && onStateChange(running);
 
   function build() {
@@ -55,12 +59,25 @@ export function createRecognizer({ lang, continuous = false, onInterim, onFinal,
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i];
-        const text = (res[0] && res[0].transcript) || '';
-        if (res.isFinal) {
-          if (text.trim() && onFinal) onFinal(text.trim());
-        } else {
-          interim += text;
+        const text = ((res[0] && res[0].transcript) || '').trim();
+        if (!res.isFinal) {
+          interim += (res[0] && res[0].transcript) || '';
+          continue;
         }
+        // Android re-delivers results it has already marked final (resultIndex doesn't advance),
+        // and a restarted session often replays the phrase that ended the previous one. Hand each
+        // sentence over exactly once: by position within this instance, and — for anything arriving
+        // in the first moments of a session, which is a replay rather than someone speaking — by
+        // checking it against what was already said.
+        if (i <= lastFinalIndex) continue;
+        lastFinalIndex = i;
+        if (!text) continue;
+        const now = Date.now();
+        recentFinals = recentFinals.filter((f) => now - f.at < ECHO_MEMORY_MS);
+        const isEcho = now - startedAt < ECHO_WINDOW_MS && recentFinals.some((f) => f.text === text);
+        recentFinals.push({ text, at: now });
+        if (isEcho) continue;
+        if (onFinal) onFinal(text);
       }
       if (onInterim) onInterim(interim.trim());
     };
@@ -98,6 +115,7 @@ export function createRecognizer({ lang, continuous = false, onInterim, onFinal,
       rec = build();
       startedAt = Date.now();
       heard = false;
+      lastFinalIndex = -1; // a fresh instance has a fresh results[] list
       rec.start();
     } catch {
       active = false;
@@ -113,6 +131,7 @@ export function createRecognizer({ lang, continuous = false, onInterim, onFinal,
       active = true;
       deadSessions = 0;
       reportedError = false;
+      recentFinals = [];
       setState(true);
       safeStart();
     },
@@ -132,7 +151,43 @@ export function createRecognizer({ lang, continuous = false, onInterim, onFinal,
   };
 }
 
+// ---------- Speaking ----------
+
 let primed = false;
+
+/** The voice list loads asynchronously on phones; resolve once it's there (or give up). */
+function voicesReady() {
+  return new Promise((resolve) => {
+    if (!canSpeak()) return resolve([]);
+    const now = speechSynthesis.getVoices();
+    if (now && now.length) return resolve(now);
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve(speechSynthesis.getVoices() || []);
+    };
+    try { speechSynthesis.addEventListener('voiceschanged', done, { once: true }); } catch { /* older engines */ }
+    setTimeout(done, 1500);
+  });
+}
+
+const normLang = (l) => String(l || '').toLowerCase().replace('_', '-');
+
+function pickVoice(voices, tag) {
+  const want = normLang(tag);
+  const base = want.split('-')[0];
+  return voices.find((v) => normLang(v.lang) === want)
+    || voices.find((v) => normLang(v.lang).startsWith(base + '-'))
+    || voices.find((v) => normLang(v.lang) === base)
+    || null;
+}
+
+/** Does this phone have any voice that can read `code` aloud? */
+export async function hasVoiceFor(code) {
+  if (!canSpeak()) return false;
+  return !!pickVoice(await voicesReady(), speechLang(code));
+}
 
 /**
  * Phones only let a page speak after a tap. Call this from a tap handler once; afterwards
@@ -142,34 +197,71 @@ export function primeSpeech() {
   if (primed || !canSpeak()) return;
   primed = true;
   try {
-    const u = new SpeechSynthesisUtterance(' ');
+    speechSynthesis.getVoices();  // nudge the voice list into loading
+    speechSynthesis.cancel();     // clear anything left wedged in the queue
+    // Real text, not a blank: some engines silently drop an empty utterance and then never
+    // fire `end`, which leaves speechSynthesis stuck "speaking" and kills every later call.
+    const u = new SpeechSynthesisUtterance('.');
     u.volume = 0;
     speechSynthesis.speak(u);
+    speechSynthesis.resume();
   } catch { /* nothing to do */ }
 }
 
-/** Read `text` aloud in `lang`. Resolves when it has finished (or couldn't play). */
+/**
+ * Read `text` aloud in `lang`.
+ * Resolves true when it actually played, false if the phone couldn't say it.
+ */
 export function speak(text, lang) {
   if (!canSpeak() || !text) return Promise.resolve(false);
   return new Promise((resolve) => {
-    const go = () => {
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = speechLang(lang);
-      const want = u.lang.toLowerCase();
-      const base = want.split('-')[0];
-      const voices = speechSynthesis.getVoices(); // may still be empty on a phone — the lang alone is enough
-      const voice = voices.find((v) => v.lang.toLowerCase() === want) || voices.find((v) => v.lang.toLowerCase().startsWith(base));
-      if (voice) u.voice = voice;
-      let done = false;
-      const finish = (ok) => { if (!done) { done = true; clearTimeout(timer); resolve(ok); } };
-      u.onend = () => finish(true);
-      u.onerror = () => finish(false);
-      const timer = setTimeout(() => finish(true), 4000 + text.length * 90); // some phones never fire onend
-      speechSynthesis.speak(u);
+    let done = false;
+    let timer = null;
+    let keepAlive = null;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      clearInterval(keepAlive);
+      resolve(ok);
     };
+
+    const go = async () => {
+      const voices = await voicesReady();
+      const tag = speechLang(lang);
+      const voice = pickVoice(voices, tag);
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = tag;
+      if (voice) u.voice = voice;
+      u.volume = 1;
+      u.rate = 1;
+      u.pitch = 1;
+      u.onstart = () => { started = true; };
+      u.onend = () => finish(started);
+      u.onerror = () => finish(false);
+      try {
+        speechSynthesis.resume(); // Chrome sometimes leaves the queue paused
+        speechSynthesis.speak(u);
+      } catch {
+        finish(false);
+        return;
+      }
+      // Chrome cuts long utterances off after ~15 s unless nudged.
+      keepAlive = setInterval(() => {
+        try {
+          if (!speechSynthesis.speaking) return;
+          speechSynthesis.pause();
+          speechSynthesis.resume();
+        } catch { /* ignore */ }
+      }, 10_000);
+      // Some phones never fire `end`; don't hang the caller forever.
+      timer = setTimeout(() => finish(started), 5000 + text.length * 110);
+    };
+
+    let started = false;
     if (speechSynthesis.speaking || speechSynthesis.pending) {
-      speechSynthesis.cancel();
-      setTimeout(go, 80); // cancel() immediately followed by speak() can drop the utterance on iOS
+      try { speechSynthesis.cancel(); } catch { /* ignore */ }
+      setTimeout(go, 150); // cancel() immediately followed by speak() can drop the utterance
     } else {
       go();
     }

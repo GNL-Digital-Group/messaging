@@ -5,7 +5,7 @@
 // installed app, so there the screen falls back to typing and the keyboard's microphone key).
 
 import { translate, TranslationError, LANGUAGES, languageName } from './translate.js';
-import { canListen, canSpeak, isIosStandalone, createRecognizer, speak, primeSpeech, listenErrorText } from './speech.js';
+import { canListen, canSpeak, isIosStandalone, createRecognizer, speak, primeSpeech, hasVoiceFor, listenErrorText } from './speech.js';
 
 const AUTO_SPEAK_KEY = 'chat.autoSpeak';
 const TRANSLATE_TIMEOUT_MS = 10_000;
@@ -34,6 +34,7 @@ export function initTalk(opts) {
     speaking: false,      // reading a translation aloud (mic paused meanwhile)
     log: [],
     open: false,
+    warnedNoVoice: false,
     autoSpeak: localStorage.getItem(AUTO_SPEAK_KEY) !== '0',
   };
   const root = $('.talk');
@@ -163,14 +164,31 @@ export function initTalk(opts) {
   async function sayAloud(text, lang) {
     const rec = T.rec;
     const index = T.listening;
+    const wasListening = !!rec && index !== null;
     T.speaking = true;
-    if (rec && index !== null) rec.stop();
+    if (wasListening) rec.stop();
     $('#listen-interim').textContent = '';
     renderButtons();
-    await speak(text, lang);
+    // Android only hands the speaker back a moment after the microphone stops; speaking
+    // immediately gets swallowed with no error.
+    if (wasListening) await new Promise((r) => setTimeout(r, 400));
+    const spoke = await speak(text, lang);
     T.speaking = false;
+    if (!spoke) await reportSpeechProblem(lang);
     if (rec && T.rec === rec && T.listening === index && index !== null && T.open) rec.start();
     renderButtons();
+  }
+
+  /** Say why nothing was heard — almost always a missing voice pack for that language. */
+  async function reportSpeechProblem(lang) {
+    if (T.warnedNoVoice) return;
+    T.warnedNoVoice = true;
+    const ok = await hasVoiceFor(lang);
+    const name = languageName(lang);
+    setStatus(ok
+      ? `Couldn\u2019t play the audio. Check the phone\u2019s volume and silent switch, then tap \ud83d\udd0a on a line.`
+      : `This phone has no ${name} voice installed, so it can only show the text. Add one under Settings \u2192 Accessibility \u2192 Text-to-speech (Android) or Settings \u2192 Accessibility \u2192 Spoken Content \u2192 Voices (iPhone).`,
+      true);
   }
 
   async function addUtterance(original, index) {
@@ -224,7 +242,7 @@ export function initTalk(opts) {
         btn.setAttribute('aria-label', 'Read aloud');
         btn.title = 'Read aloud';
         btn.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M3 9v6h4l5 4V5L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>';
-        btn.addEventListener('click', () => sayAloud(u.text, u.to));
+        btn.addEventListener('click', () => { T.warnedNoVoice = false; sayAloud(u.text, u.to); });
         row.append(btn);
       }
       box.append(row);

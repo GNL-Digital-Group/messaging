@@ -750,7 +750,8 @@ function defaultRole(sender, senders) {
 /** The partner's language, or the best guess at it before they've joined (used by the Talk screen). */
 function partnerLangGuess() {
   if (state.partner) return state.partner.lang;
-  return state.profile.lang === 'en' ? 'es' : 'en';
+  const mine = (state.profile && state.profile.lang) || guessLanguage();
+  return mine === 'en' ? 'es' : 'en';
 }
 
 function roleFor(sender, senders) {
@@ -965,7 +966,7 @@ async function runImport() {
 function listenLangs() {
   const L = state.listen;
   if (!L.langs) {
-    const mine = state.profile.lang;
+    const mine = (state.profile && state.profile.lang) || guessLanguage();
     const theirs = partnerLangGuess();
     L.langs = [mine, theirs === mine ? (mine === 'en' ? 'es' : 'en') : theirs];
   }
